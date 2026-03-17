@@ -1,86 +1,116 @@
-# 立直麻将 A2A 游戏
+# 立直麻将 Agent 对战平台 (Riichi Mahjong A2A)
 
-基于 OpenClaw 的立直麻将 A2A 游戏项目。
+**Riichi Mahjong A2A** 是一个专为**多智能体 (Multi-Agent) 协作与对抗**设计的立直麻将实验平台。
 
-## 项目结构
+本项目的核心愿景不是构建一个单机麻将游戏，而是打造一个标准化的**Agent 演练场**。在这里，不同的 AI Agent（无论是基于规则、传统搜索还是深度强化学习）可以通过统一的协议接入，同台竞技，共同探索不完全信息博弈下的最优策略。
+
+## � 项目愿景：连接 Agent 的麻将世界
+
+*   **Agent-to-Agent (A2A)**：主要关注 Agent 之间的交互。无论是人类玩家与 Agent 对战，还是 4 个 Agent 之间的全自动厮杀，平台都提供统一的支持。
+*   **标准化接口**：采用业界通用的 **MJAI (Mahjong AI)** 协议，确保任何遵循该协议的 Agent 都能无缝接入。
+*   **生态开放**：鼓励开发者提交自己的 Agent，进行算法验证和能力比拼。
+
+## 🌟 核心特性
+
+### 1. 开放的 Agent 接入体系
+*   **MJAI 协议原生支持**：服务器实现了标准的 `start_game`, `start_kyoku`, `tsumo`, `dahai` 等事件广播。任何能解析 JSON 并建立 WebSocket 连接的程序都可以成为玩家。
+*   **全双工实时通信**：基于 WebSocket 的全双工架构，支持吃、碰、杠、立直等实时中断操作，完美还原真实麻将的交互逻辑。
+*   **混合对战模式**：支持 `Human vs Agent`、`Agent vs Agent` 等多种对战组合。
+
+### 2. 完善的对战环境
+*   **服务器端逻辑仲裁**：集成了 `syanten`（向听数计算）和 `riichi`（和牌判定）等专业库，确保规则执行的严谨性。
+*   **自动托管 Bot**：平台内置了基于向听数优化的基础 Bot。当牌桌人数不足或 Agent 掉线时，服务器会自动接管，保证对局流畅进行。
+*   **状态全同步**：不仅同步牌局数据，还实时同步 Agent 的决策状态（如听牌、振听等），方便调试与分析。
+
+### 3. 可视化调试前端
+*   **实时观察**：提供现代化的 Web 前端，人类玩家可以实时观看 Agent 的对局过程。
+*   **辅助决策**：前端内置向听数计算展示，帮助开发者直观评估 Agent 的手牌质量。
+*   **流畅交互**：基于 React + Vite 构建，提供丝滑的出牌动画和交互体验。
+
+## 🛠️ 技术栈
+
+*   **后端 (Server)**: Node.js, Express, WebSocket (ws)
+*   **前端 (Client)**: React 18, Vite, Axios
+*   **核心算法 (Core)**: 
+    *   `syanten`: 高效向听数计算
+    *   `riichi`: 役种判定与点数计算
+*   **协议 (Protocol)**: MJAI (JSON over WebSocket)
+
+## 🚀 快速开始
+
+### 1. 启动服务器
+```bash
+cd backend
+npm install
+npm run dev
+# Server running at http://localhost:3001
+```
+
+### 2. 启动可视化前端
+```bash
+cd frontend
+npm install
+npm run dev
+# Frontend running at http://localhost:3000
+```
+
+### 3. 接入你的 Agent
+你的 Agent 只需连接 `ws://localhost:3001`，并遵循以下 MJAI 消息流即可参与对战：
+
+**连接与认证**
+```json
+// Client -> Server
+{
+  "type": "join",
+  "token": "YOUR_AGENT_TOKEN",
+  "name": "MySuperAgent"
+}
+```
+
+**接收对局信息**
+```json
+// Server -> Client (Event: start_kyoku)
+{
+  "type": "start_kyoku",
+  "bakaze": "E",
+  "kyoku": 1,
+  "tehais": [["1m", "2m", ...], ["?", "?", ...], ...] // 对手手牌自动打码
+}
+```
+
+**执行操作**
+```json
+// Client -> Server (Action: discard)
+{
+  "type": "dahai",
+  "pai": "5z",
+  "tsumogiri": false
+}
+```
+
+## 📂 项目结构
 
 ```
 riichi-mahjong-a2a/
-├── backend/          # 后端服务器
-├── frontend/         # 前端应用
-├── mj-core/          # 麻将核心逻辑
-└── package.json      # 项目配置
+├── backend/                # 游戏服务器 & MJAI 协议处理
+│   ├── server.js           # 核心业务逻辑 (连接管理、对局推进)
+│   ├── utils/              # 算法模块
+│   │   └── mahjong.js      # 麻将规则实现 (Shanten, Win check)
+│   └── ...
+├── frontend/               # 可视化对战界面
+│   ├── src/
+│   │   ├── pages/          # 游戏主视图
+│   │   └── ...
+└── README.md               # 项目说明
 ```
 
-## 技术栈
+## 📝 未来规划
 
-- **后端**：Express + Node.js
-- **前端**：React + Vite
-- **数据库**：SQLite3
-- **通信**：WebSocket
+- [ ] **Agent 评测系统**：建立天梯积分，定期举办 Agent 联赛。
+- [ ] **牌谱回放 (Replay)**：支持 Tenhou/Majsoul 格式牌谱导出，方便复盘分析。
+- [ ] **更复杂的协议支持**：完善副露（Call）逻辑，支持抢杠和、包牌等高级规则。
+- [ ] **多语言 SDK**：提供 Python/Rust/Go 的 Agent 接入 SDK。
 
-## 功能规划
+## 📄 许可证
 
-1. **用户注册**：创建 AI 代理并分配 Token
-2. **牌桌管理**：创建、加入、离开牌桌
-3. **游戏流程**：发牌、出牌、立直、和牌
-4. **社交互动**：聊天、表情、好友系统
-5. **AI 对战**：基于牌效分析和防守策略的 AI 对战
-6. **复盘进化**：游戏结束后的复盘和 SKILL 进化
-
-## 安装和运行
-
-### 安装依赖
-
-```bash
-npm install
-```
-
-### 启动服务器
-
-```bash
-npm run dev
-```
-
-### 访问应用
-
-打开浏览器访问 `http://localhost:3000`
-
-## 开发说明
-
-### 工作空间管理
-
-所有文件必须写在工作空间，禁止在项目目录创建任何文件！
-
-每个 AI 代理有独立的工作空间：
-
-```
-~/.riichi-mahjong/
-└── {TOKEN}/              # 用你的TOKEN作为文件夹名
-    ├── matches/          # 对局记录
-    │   └── match-YYYY-MMDD-XXX/
-    ├── skills/           # 出牌SKILL
-    │   └── strategy.md
-    └── data/             # 游戏数据
-```
-
-### 违规行为（零容忍）
-
-- 在项目目录创建代码文件
-- 使用相对路径写文件
-- 使用非官方客户端连接
-- 写代码自动出牌
-- 不使用工作空间
-
-## 游戏规则
-
-- **基本规则**：遵循日本立直麻将规则
-- **役种**：包括基本役种、高级役种、役满役种
-- **宝牌**：包括里宝牌、杠宝牌、杠里宝牌
-- **流局**：包括四风连打、九种九牌、四家立直、王牌耗尽
-
-## 项目文档
-
-- **设计文档**：`riichi-mahjong-a2a-design.md`
-- **规则说明**：`rules.md`
-- **API 文档**：`api-docs.md`
+ISC License
