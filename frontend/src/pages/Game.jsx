@@ -3,6 +3,7 @@ import axios from 'axios';
 
 function Game({ user }) {
   const [gameState, setGameState] = useState(null);
+  const [tableId, setTableId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -10,7 +11,8 @@ function Game({ user }) {
 
   useEffect(() => {
     fetchGameState();
-    fetchChatMessages();
+    const interval = setInterval(fetchGameState, 3000); // Poll every 3 seconds
+    return () => clearInterval(interval);
   }, []);
 
   const fetchGameState = async () => {
@@ -18,8 +20,20 @@ function Game({ user }) {
       setLoading(true);
       const response = await axios.get('/api/table/available');
       const table = response.data.data;
+      setTableId(table.table_id);
+      
+      // 先加入牌桌，忽略可能已经加入的错误
+      try {
+        await axios.post(`/api/table/${table.table_id}/join`);
+      } catch (e) {
+        // 如果已经加入或其他错误，这里可以暂时忽略，继续获取状态
+      }
+      
       const stateResponse = await axios.get(`/api/table/${table.table_id}/state`);
       setGameState(stateResponse.data.data);
+      
+      // 获取聊天记录
+      fetchChatMessages(table.table_id);
     } catch (error) {
       setError(error.response?.data?.message || '获取游戏状态失败');
     } finally {
@@ -27,9 +41,12 @@ function Game({ user }) {
     }
   };
 
-  const fetchChatMessages = async () => {
+  const fetchChatMessages = async (tid) => {
+    const id = tid || tableId;
+    if (!id) return;
+
     try {
-      const response = await axios.get('/api/table/table_1/messages');
+      const response = await axios.get(`/api/table/${id}/messages`);
       setChatMessages(response.data.data);
     } catch (error) {
       console.error('获取聊天历史失败:', error);
@@ -37,10 +54,10 @@ function Game({ user }) {
   };
 
   const handleSendMessage = async () => {
-    if (!message.trim()) return;
+    if (!message.trim() || !tableId) return;
 
     try {
-      const response = await axios.post('/api/table/table_1/chat', {
+      const response = await axios.post(`/api/table/${tableId}/chat`, {
         message: message.trim()
       });
       
@@ -56,9 +73,11 @@ function Game({ user }) {
   };
 
   const handlePlay = async (tile) => {
+    if (!tableId) return;
+
     try {
       const response = await axios.post('/api/game/play', {
-        table_id: 'table_1',
+        table_id: tableId,
         tile
       });
       
@@ -73,9 +92,11 @@ function Game({ user }) {
   };
 
   const handleRiichi = async () => {
+    if (!tableId) return;
+
     try {
       const response = await axios.post('/api/game/riichi', {
-        table_id: 'table_1'
+        table_id: tableId
       });
       
       if (response.data.success) {
@@ -106,7 +127,10 @@ function Game({ user }) {
       <div className="card">
         <h2 className="card-title">立直麻将 A2A 游戏</h2>
         <p className="card-content text-muted">
-          桌号：table_1 | 您的座位：{gameState.my_seat} | 积分：{gameState.players[gameState.my_seat].score}
+          桌号：{tableId} | 您的座位：{gameState.my_seat} | 积分：{gameState.players[gameState.my_seat].score}
+        </p>
+        <p className="card-content text-muted">
+          向听数：{gameState.my_shanten !== undefined ? (gameState.my_shanten <= 0 ? (gameState.my_shanten === -1 ? '胡牌' : '听牌') : gameState.my_shanten + ' 向听') : '计算中...'}
         </p>
         
         <div className="game-info">

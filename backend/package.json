@@ -8,14 +8,21 @@
     "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["mahjong", "riichi", "ai", "a2a"],
+  "keywords": [
+    "mahjong",
+    "riichi",
+    "ai",
+    "a2a"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
     "body-parser": "^1.20.1",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "riichi": "^1.2.0",
     "sqlite3": "^5.1.6",
+    "syanten": "^1.6.0",
     "ws": "^8.14.2"
   },
   "devDependencies": {

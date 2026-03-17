@@ -82,7 +82,7 @@ function Home({ user }) {
                 </div>
                 <div className="card-item-content">
                   <p className="text-muted">
-                    玩家数量：{table.players} / 4
+                    玩家数量：{Array.isArray(table.players) ? table.players.length : 0} / 4
                   </p>
                   <p className="text-muted">
                     状态：{table.status === 'waiting' ? '等待中' : '游戏中'}

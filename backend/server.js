@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const http = require('http');
+const { calculateShanten, checkWin, getMjaiType } = require('./utils/mahjong');
 
 const app = express();
 const server = http.createServer(app);
@@ -16,6 +17,105 @@ app.use(express.static(path.join(__dirname, 'public')));
 const users = [];
 const tables = [];
 const matches = [];
+
+function initGame(table) {
+  const tiles = [];
+  const suits = ['man', 'pin', 'sou'];
+  const winds = ['东', '南', '西', '北'];
+  const dragons = ['白', '发', '中'];
+
+  // Suits 1-9
+  suits.forEach(suit => {
+    for (let i = 1; i <= 9; i++) {
+      for (let j = 0; j < 4; j++) {
+        tiles.push({ suit, rank: i.toString(), value: i });
+      }
+    }
+  });
+
+  // Winds
+  winds.forEach((wind, index) => {
+    for (let j = 0; j < 4; j++) {
+      tiles.push({ suit: 'wind', rank: wind, value: 10 + index });
+    }
+  });
+
+  // Dragons
+  dragons.forEach((dragon, index) => {
+    for (let j = 0; j < 4; j++) {
+      tiles.push({ suit: 'dragon', rank: dragon, value: 20 + index });
+    }
+  });
+
+  // Shuffle
+  for (let i = tiles.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+  }
+
+  table.wall = tiles;
+  table.dora_indicators = [table.wall.pop()];
+  table.current_player = 0;
+  table.discards = [];
+  
+  // Deal 13 tiles to each player
+  table.players.forEach(player => {
+    player.hand = [];
+    for (let i = 0; i < 13; i++) {
+      player.hand.push(table.wall.pop());
+    }
+    player.score = 25000;
+    // player.discards is already used in state response as a count, let's keep it compatible or update it
+    // In state response: discards: [{ player: 0, tile: ... }] (global)
+    // In players list: discards: 10 (count)
+  });
+  
+  table.status = 'playing';
+
+  // MJAI Protocol: Start Game
+  table.players.forEach(player => {
+    if (player.ws) {
+      // 1. start_game
+      player.ws.send(JSON.stringify({
+        type: 'start_game',
+        id: player.seat,
+        names: table.players.map(p => p.name)
+      }));
+
+      // 2. start_kyoku
+      const tehais = table.players.map(p => p.hand.map(getMjaiType));
+      // Mask other players' hands
+      const maskedTehais = tehais.map((hand, idx) => 
+        idx === player.seat ? hand : hand.map(() => '?')
+      );
+
+      player.ws.send(JSON.stringify({
+        type: 'start_kyoku',
+        bakaze: 'E',
+        kyoku: 1,
+        honba: 0,
+        kyotaku: 0,
+        oya: 0,
+        dora_marker: getMjaiType(table.dora_indicators[0]),
+        tehais: maskedTehais
+      }));
+
+      // 3. First tsumo (if applicable)
+      if (table.current_player === player.seat) {
+        // In real game, dealer draws first tile or has 14 tiles?
+        // Let's assume dealer has 14 tiles initially or draws one now.
+        // Our init logic gave 13 tiles. So draw one.
+        const drawnTile = table.wall.pop();
+        player.hand.push(drawnTile);
+        player.ws.send(JSON.stringify({
+          type: 'tsumo',
+          actor: player.seat,
+          pai: getMjaiType(drawnTile)
+        }));
+      }
+    }
+  });
+}
 
 // 注册用户
 app.post('/api/agent/register', (req, res) => {
@@ -48,7 +148,7 @@ app.get('/api/table/available', (req, res) => {
   const availableTable = tables.find(t => t.players.length < 4) || {
     table_id: `table_${Date.now()}`,
     table_number: tables.length + 1,
-    players: 0,
+    players: [],
     status: 'waiting'
   };
   if (!tables.includes(availableTable)) {
@@ -91,10 +191,18 @@ app.post('/api/table/:id/join', (req, res) => {
     id: user.id,
     name: user.name,
     avatar: user.avatar,
-    seat: table.players.length
+    seat: table.players.length,
+    hand: [],
+    score: 25000,
+    discards: 0
   };
   table.players.push(player);
-  table.status = table.players.length === 4 ? 'playing' : 'waiting';
+  
+  if (table.players.length === 4) {
+    initGame(table);
+  } else {
+    table.status = 'waiting';
+  }
 
   res.json({
     success: true,
@@ -187,28 +295,24 @@ app.get('/api/table/:id/state', (req, res) => {
   }
 
   // 模拟游戏状态
+  const shanten = calculateShanten(player.hand);
+  
   res.json({
     success: true,
     data: {
       status: table.status,
-      current_player: 0,
+      current_player: table.current_player || 0,
       my_seat: player.seat,
-      my_hand: [
-        { suit: 'man', rank: '1', value: 1 },
-        { suit: 'man', rank: '2', value: 2 },
-        { suit: 'pin', rank: '5', value: 35 },
-        { suit: 'sou', rank: '5', value: 55 }
-      ],
-      discards: [
-        { player: 0, tile: { suit: 'sou', rank: '3', value: 23 } }
-      ],
-      dora_indicators: [{ suit: 'man', rank: '3', value: 3 }],
-      riichi_bets: [0, 0, 1, 0],
+      my_hand: player.hand || [],
+      my_shanten: shanten,
+      discards: table.discards || [],
+      dora_indicators: table.dora_indicators || [],
+      riichi_bets: [0, 0, 0, 0], // Simplified
       players: table.players.map(p => ({
         seat: p.seat,
         name: p.name,
-        score: 25000,
-        discards: 10
+        score: p.score || 25000,
+        discards: p.discards || 0
       }))
     }
   });
@@ -235,11 +339,93 @@ app.post('/api/game/play', (req, res) => {
   }
 
   // 模拟出牌成功
+  const handIndex = player.hand.findIndex(t => t.suit === tile.suit && t.value === tile.value);
+  if (handIndex > -1) {
+    player.hand.splice(handIndex, 1);
+  }
+  table.discards.push({ player: player.seat, tile });
+  player.discards++; // Count
+  
+  // Move to next player
+  table.current_player = (table.current_player + 1) % 4;
+  
+  // MJAI: Broadcast dahai
+  table.players.forEach(p => {
+    if (p.ws) {
+      p.ws.send(JSON.stringify({
+        type: 'dahai',
+        actor: player.seat,
+        pai: getMjaiType(tile),
+        tsumogiri: false // Simplified
+      }));
+    }
+  });
+
+  // Simulate AI turns until it's user's turn again
+  let steps = 0;
+  while (table.current_player !== player.seat && steps < 3 && table.status === 'playing') {
+      const aiPlayer = table.players[table.current_player];
+      
+      // AI Draw
+      if (table.wall.length > 0) {
+          const drawnTile = table.wall.pop();
+          aiPlayer.hand.push(drawnTile);
+
+          // MJAI: Broadcast tsumo
+          table.players.forEach(p => {
+            if (p.ws) {
+              p.ws.send(JSON.stringify({
+                type: 'tsumo',
+                actor: aiPlayer.seat,
+                pai: p.seat === aiPlayer.seat ? getMjaiType(drawnTile) : '?'
+              }));
+            }
+          });
+          
+          // AI Discard (Simple: Discard drawn tile)
+          const discardTile = aiPlayer.hand.pop();
+          table.discards.push({ player: aiPlayer.seat, tile: discardTile });
+          aiPlayer.discards++;
+
+          // MJAI: Broadcast dahai
+          table.players.forEach(p => {
+            if (p.ws) {
+              p.ws.send(JSON.stringify({
+                type: 'dahai',
+                actor: aiPlayer.seat,
+                pai: getMjaiType(discardTile),
+                tsumogiri: true
+              }));
+            }
+          });
+      } else {
+          table.status = 'finished';
+      }
+      
+      table.current_player = (table.current_player + 1) % 4;
+      steps++;
+  }
+  
+  // User draws again if it's their turn
+  if (table.current_player === player.seat && table.status === 'playing' && table.wall.length > 0) {
+      const drawnTile = table.wall.pop();
+      player.hand.push(drawnTile);
+
+      // MJAI: Send tsumo to user
+      if (player.ws) {
+        player.ws.send(JSON.stringify({
+          type: 'tsumo',
+          actor: player.seat,
+          pai: getMjaiType(drawnTile)
+        }));
+      }
+  }
+
   res.json({
     success: true,
     message: '出牌成功',
     data: {
-      next_player: (table.current_player + 1) % 4
+      next_player: table.current_player
     }
   });
 });
@@ -392,13 +578,22 @@ wss.on('connection', (ws) => {
 
     switch (message.type) {
       case 'join':
-        // 处理加入牌桌
+        // 将 WS 连接与玩家绑定
+        const token = message.token;
+        const user = users.find(u => u.api_key === token);
+        if (user) {
+            // Find if user is in any table
+            const table = tables.find(t => t.players.some(p => p.id === user.id));
+            if (table) {
+                const player = table.players.find(p => p.id === user.id);
+                player.ws = ws;
+                console.log(`Player ${user.name} reconnected to table ${table.table_id}`);
+            }
+        }
         break;
-      case 'ready':
-        // 处理准备状态
-        break;
-      case 'play':
-        // 处理出牌
+      case 'dahai':
+        // MJAI: { type: "dahai", actor: 0, pai: "6p", tsumogiri: false }
+        // Handle discard via WS if implementing full MJAI here
         break;
       default:
         console.log('未知消息类型:', message.type);
@@ -411,7 +606,7 @@ wss.on('connection', (ws) => {
 });
 
 // 启动服务器
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`服务器运行在 http://localhost:${PORT}`);
 });
