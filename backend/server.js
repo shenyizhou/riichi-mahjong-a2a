@@ -3,7 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const http = require('http');
-const { calculateShanten, checkWin, getMjaiType } = require('./utils/mahjong');
+const { calculateShanten, checkWin, getMjaiType, getBestDiscard } = require('./utils/mahjong');
 
 const app = express();
 const server = http.createServer(app);
@@ -361,74 +361,112 @@ app.post('/api/game/play', (req, res) => {
     }
   });
 
-  // Simulate AI turns until it's user's turn again
-  let steps = 0;
-  while (table.current_player !== player.seat && steps < 3 && table.status === 'playing') {
-      const aiPlayer = table.players[table.current_player];
-      
-      // AI Draw
-      if (table.wall.length > 0) {
-          const drawnTile = table.wall.pop();
-          aiPlayer.hand.push(drawnTile);
-
-          // MJAI: Broadcast tsumo
-          table.players.forEach(p => {
-            if (p.ws) {
-              p.ws.send(JSON.stringify({
-                type: 'tsumo',
-                actor: aiPlayer.seat,
-                pai: p.seat === aiPlayer.seat ? getMjaiType(drawnTile) : '?'
-              }));
-            }
-          });
-          
-          // AI Discard (Simple: Discard drawn tile)
-          const discardTile = aiPlayer.hand.pop();
-          table.discards.push({ player: aiPlayer.seat, tile: discardTile });
-          aiPlayer.discards++;
-
-          // MJAI: Broadcast dahai
-          table.players.forEach(p => {
-            if (p.ws) {
-              p.ws.send(JSON.stringify({
-                type: 'dahai',
-                actor: aiPlayer.seat,
-                pai: getMjaiType(discardTile),
-                tsumogiri: true
-              }));
-            }
-          });
-      } else {
-          table.status = 'finished';
-      }
-      
-      table.current_player = (table.current_player + 1) % 4;
-      steps++;
-  }
+  // Check if any AI wants to call (Pon/Chi/Ron)
+  // For now, let's just proceed to next turn after a small delay to simulate thinking/network
+  setTimeout(() => {
+    processNextTurn(table);
+  }, 1000);
   
-  // User draws again if it's their turn
-  if (table.current_player === player.seat && table.status === 'playing' && table.wall.length > 0) {
-      const drawnTile = table.wall.pop();
-      player.hand.push(drawnTile);
-
-      // MJAI: Send tsumo to user
-      if (player.ws) {
-        player.ws.send(JSON.stringify({
-          type: 'tsumo',
-          actor: player.seat,
-          pai: getMjaiType(drawnTile)
-        }));
-      }
-  }
-
   res.json({
     success: true,
     message: '出牌成功',
     data: {
-      next_player: table.current_player
+      next_player: (table.current_player + 1) % 4
     }
   });
 });
+
+function processNextTurn(table) {
+  // Move to next player
+  table.current_player = (table.current_player + 1) % 4;
+  const currentPlayer = table.players[table.current_player];
+  
+  if (currentPlayer.ws) {
+      // It's a connected agent/player.
+      if (table.wall.length > 0) {
+          const drawnTile = table.wall.pop();
+          currentPlayer.hand.push(drawnTile);
+          
+          currentPlayer.ws.send(JSON.stringify({
+              type: 'tsumo',
+              actor: currentPlayer.seat,
+              pai: getMjaiType(drawnTile)
+          }));
+          
+          // Broadcast tsumo to others (masked)
+          table.players.forEach(p => {
+              if (p.seat !== currentPlayer.seat && p.ws) {
+                  p.ws.send(JSON.stringify({
+                      type: 'tsumo',
+                      actor: currentPlayer.seat,
+                      pai: '?'
+                  }));
+              }
+          });
+      } else {
+          table.status = 'finished';
+          broadcastGameEnd(table);
+      }
+  } else {
+      // Server-side Bot Logic
+      if (table.wall.length > 0) {
+          const drawnTile = table.wall.pop();
+          currentPlayer.hand.push(drawnTile);
+          
+          // Broadcast tsumo (masked)
+          table.players.forEach(p => {
+              if (p.ws) {
+                  p.ws.send(JSON.stringify({
+                      type: 'tsumo',
+                      actor: currentPlayer.seat,
+                      pai: '?'
+                  }));
+              }
+          });
+          
+          // Bot Decision: Minimize Shanten
+          // Simulate "thinking" time
+          setTimeout(() => {
+              const discardIndex = getBestDiscard(currentPlayer.hand);
+              let discardTile;
+              if (discardIndex >= 0 && discardIndex < currentPlayer.hand.length) {
+                discardTile = currentPlayer.hand.splice(discardIndex, 1)[0];
+              } else {
+                discardTile = currentPlayer.hand.pop();
+              }
+              
+              table.discards.push({ player: currentPlayer.seat, tile: discardTile });
+              currentPlayer.discards++;
+              
+              // Broadcast dahai
+              table.players.forEach(p => {
+                  if (p.ws) {
+                      p.ws.send(JSON.stringify({
+                          type: 'dahai',
+                          actor: currentPlayer.seat,
+                          pai: getMjaiType(discardTile),
+                          tsumogiri: discardIndex === currentPlayer.hand.length // if it was the drawn tile
+                      }));
+                  }
+              });
+              
+              // Next turn
+              processNextTurn(table);
+          }, 1000);
+      } else {
+          table.status = 'finished';
+          broadcastGameEnd(table);
+      }
+  }
+}
+
+function broadcastGameEnd(table) {
+    table.players.forEach(p => {
+        if (p.ws) {
+            p.ws.send(JSON.stringify({ type: 'end_game' }));
+        }
+    });
+}
 
 // 立直
 app.post('/api/game/riichi', (req, res) => {

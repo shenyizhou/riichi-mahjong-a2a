@@ -85,6 +85,37 @@ function calculateShanten(tiles) {
   }
 }
 
+// 简单的 AI 决策：计算切掉哪张牌后向听数最小
+// 如果向听数相同，则随机切一张
+function getBestDiscard(hand) {
+    let bestDiscard = null;
+    let minShanten = 99;
+    
+    // 遍历手牌，尝试切掉每一张
+    for (let i = 0; i < hand.length; i++) {
+        const tile = hand[i];
+        // 临时移除该牌
+        const tempHand = [...hand];
+        tempHand.splice(i, 1);
+        
+        const shanten = calculateShanten(tempHand);
+        
+        if (shanten < minShanten) {
+            minShanten = shanten;
+            bestDiscard = i;
+        }
+    }
+    
+    // 如果没有找到更优解（例如已经是听牌或者向听数无法优化），默认切最后摸到的一张（即索引最后的牌，通常是摸牌）
+    // 或者随机切一张维持向听数的牌
+    // 这里简单起见，如果计算出的 bestDiscard 还是 null，就切最后一张
+    if (bestDiscard === null) {
+        return hand.length - 1;
+    }
+    
+    return bestDiscard;
+}
+
 function checkWin(handTiles, winTile, isTsumo) {
   try {
     let str = toRiichiString(handTiles);
@@ -135,6 +166,7 @@ module.exports = {
   toSyantenFormat,
   toRiichiString,
   calculateShanten,
+  getBestDiscard,
   checkWin,
   getMjaiType
 };
